@@ -1,0 +1,30 @@
+C:\Users\Администратор\AppData\Local\Temporary Projects\PicToCSV_converter\bin\Debug\PicToCSV_converter.exe
+C:\Users\Администратор\AppData\Local\Temporary Projects\PicToCSV_converter\bin\Debug\PicToCSV_converter.pdb
+C:\Users\Администратор\AppData\Local\Temporary Projects\PicToCSV_converter\obj\Debug\PicToCSV_converter.csprojResolveAssemblyReference.cache
+C:\Users\Администратор\AppData\Local\Temporary Projects\PicToCSV_converter\obj\Debug\PicToCSV_converter.Form1.resources
+C:\Users\Администратор\AppData\Local\Temporary Projects\PicToCSV_converter\obj\Debug\PicToCSV_converter.Properties.Resources.resources
+C:\Users\Администратор\AppData\Local\Temporary Projects\PicToCSV_converter\obj\Debug\PicToCSV_converter.csproj.GenerateResource.Cache
+C:\Users\Администратор\AppData\Local\Temporary Projects\PicToCSV_converter\obj\Debug\PicToCSV_converter.exe
+C:\Users\Администратор\AppData\Local\Temporary Projects\PicToCSV_converter\obj\Debug\PicToCSV_converter.pdb
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\bin\Debug\zxing.dll
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\bin\Debug\zxing.presentation.dll
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\bin\Debug\zxing.xml
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\bin\Debug\zxing.presentation.xml
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\obj\Debug\PicToCSV_converter.csprojResolveAssemblyReference.cache
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\obj\Debug\PicToCSV_converter.Form1.resources
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\obj\Debug\PicToCSV_converter.csproj.GenerateResource.Cache
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\bin\Debug\EPS_converter.exe.config
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\bin\Debug\EPS_converter.exe
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\bin\Debug\EPS_converter.pdb
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\bin\Debug\Ghostscript.NET.dll
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\bin\Debug\Magick.NET-Q16-AnyCPU.dll
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\bin\Debug\Magick.NET.Core.dll
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\bin\Debug\Ghostscript.NET.xml
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\bin\Debug\Magick.NET-Q16-AnyCPU.xml
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\bin\Debug\Magick.NET.Core.xml
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\obj\Debug\EPS_converter.Properties.Resources.resources
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\obj\Debug\EPS_converter.exe
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\PicToCSV_converter\PicToCSV_converter\obj\Debug\EPS_converter.pdb
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\EPS_converter\PicToCSV_converter\bin\Debug\EPS_converter.exe.config
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\EPS_converter\PicToCSV_converter\obj\Debug\EPS_converter.exe
+C:\Users\Администратор\Documents\Visual Studio 2015\Projects\EPS_converter\PicToCSV_converter\obj\Debug\EPS_converter.pdb
