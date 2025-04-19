@@ -6,7 +6,7 @@ import catboost as cb
 import joblib
 import gc
 import optuna
-from datetime import timedelta
+from datetime import datetime, timedelta
 import warnings
 from sklearn.metrics import mean_absolute_error, mean_squared_error
 from sklearn.preprocessing import StandardScaler, PowerTransformer
@@ -538,7 +538,7 @@ def optimize_lightgbm(X_train, y_train, X_test, y_test, cat_features=None, n_tri
             'min_child_samples': trial.suggest_int('min_child_samples', 5, 100),
             'lambda_l1': trial.suggest_float('lambda_l1', 1e-8, 10.0, log=True),
             'lambda_l2': trial.suggest_float('lambda_l2', 1e-8, 10.0, log=True),
-            'n_jobs': -1,
+            'n_jobs': 32,
             'random_state': 42
         }
         
@@ -658,7 +658,7 @@ def optimize_xgboost(X_train, y_train, X_test, y_test, n_trials=50):
             'alpha': trial.suggest_float('alpha', 1e-8, 1.0, log=True),
             'lambda': trial.suggest_float('lambda', 1e-8, 1.0, log=True),
             'gamma': trial.suggest_float('gamma', 1e-8, 1.0, log=True),
-            'n_jobs': -1,
+            'n_jobs': 32,
             'random_state': 42
         }
         
@@ -773,7 +773,8 @@ def optimize_catboost(X_train, y_train, X_test, y_test, cat_features=None, n_tri
             'bootstrap_type': trial.suggest_categorical('bootstrap_type', ['Bayesian', 'Bernoulli', 'MVS']),
             'random_seed': 42,
             'allow_writing_files': False,
-            'task_type': 'CPU'
+            'task_type': 'CPU',
+            'thread_count': 32
         }
         
         if params['bootstrap_type'] == 'Bayesian':
@@ -1398,23 +1399,20 @@ def generate_sales_report(test_df, ensemble_results, importance_df, metrics, sea
     
     # Заголовок отчета
     report.append("# Отчет о прогнозе продаж\n")
-    report.append(f"Дата создания: {pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+    report.append(f"Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
     
     # Основные метрики
     report.append("## Точность прогноза\n")
-    report.append(f"* RMSE: {metrics['RMSE']:.4f}")
-    report.append(f"* MAE: {metrics['MAE']:.4f}")
-    report.append(f"* MAPE: {metrics['MAPE']:.2f}%")
-    report.append(f"* SMAPE: {metrics['SMAPE']:.2f}%")
-    
-    report.append(f"\n* Точность в пределах 10%: {metrics.get('Точность_в_пределах_10%', 0):.2f}%")
-    report.append(f"* Точность в пределах 20%: {metrics.get('Точность_в_пределах_20%', 0):.2f}%")
+    report.append(f"* MAPE: {metrics.get('MAPE', 0):.2f}%\n")
+    report.append(f"* SMAPE: {metrics.get('SMAPE', 0):.2f}%\n")
+    report.append(f"* Точность в пределах 10%: {metrics.get('Точность_в_пределах_10%', 0):.2f}%\n")
+    report.append(f"* Точность в пределах 20%: {metrics.get('Точность_в_пределах_20%', 0):.2f}%\n")
     report.append(f"* Точность в пределах 30%: {metrics.get('Точность_в_пределах_30%', 0):.2f}%\n")
     
     # Важность признаков
     report.append("## Топ-10 важных признаков\n")
-    for i, (feature, importance) in enumerate(importance_df['Mean_Importance'].head(10).items(), 1):
-        report.append(f"{i}. **{feature}**: {importance:.4f}")
+    for i, (feature, importance) in enumerate(importance_df.head(10).iterrows(), 1):
+        report.append(f"{i}. {feature}: {importance['Mean_Importance']:.4f}\n")
     report.append("")
     
     # Анализ сезонности
@@ -1423,4 +1421,306 @@ def generate_sales_report(test_df, ensemble_results, importance_df, metrics, sea
     # По дням недели
     weekday_analysis = seasonality_analysis.get('weekday_analysis')
     if weekday_analysis is not None:
-        report.append("### Продажи по дням нед
+        report.append("### Продажи по дням недели\n")
+        report.append("| День недели | Средние продажи | Медиана | Стандартное отклонение | Отношение к среднему |")
+        report.append("|-------------|-----------------|---------|------------------------|----------------------|")
+        weekday_mean = weekday_analysis['mean'].mean()
+        for _, row in weekday_analysis.iterrows():
+            report.append(f"| {row['День']} | {row['mean']:.2f} | {row['median']:.2f} | {row['std']:.2f} | {row['mean']/weekday_mean:.2f} |")
+        report.append("")
+    
+    # По месяцам
+    monthly_analysis = seasonality_analysis.get('monthly_analysis')
+    if monthly_analysis is not None:
+        report.append("### Продажи по месяцам\n")
+        report.append("| Месяц | Средние продажи | Медиана | Стандартное отклонение | Отношение к среднему |")
+        report.append("|-------|-----------------|---------|------------------------|----------------------|")
+        
+        monthly_mean = monthly_analysis['mean'].mean()
+        for _, row in monthly_analysis.iterrows():
+            report.append(f"| {row['Месяц_название']} | {row['mean']:.2f} | {row['median']:.2f} | {row['std']:.2f} | {row['mean']/monthly_mean:.2f} |")
+        report.append("")
+    
+    # По влиянию праздников
+    holiday_analysis = seasonality_analysis.get('holiday_analysis')
+    if holiday_analysis:
+        report.append("### Влияние праздников на продажи\n")
+        report.append("| Период | Средние продажи | Отношение к среднему |")
+        report.append("|--------|-----------------|----------------------|")
+        
+        for item in holiday_analysis:
+            report.append(f"| {item['Период']} | {item['Средние продажи']:.2f} | {item['Отношение к среднему']:.2f} |")
+        report.append("")
+    
+    # Анализ товаров
+    report.append("## Анализ товаров\n")
+    
+    # Товары с наибольшей ошибкой
+    worst_items = test_df.groupby('SKU')['Абс_ошибка'].mean().sort_values(ascending=False).head(5)
+    report.append("### Топ-5 товаров с наибольшей ошибкой\n")
+    report.append("| SKU | Средняя абсолютная ошибка |")
+    report.append("|-----|----------------------------|")
+    for sku, error in worst_items.items():
+        report.append(f"| {sku} | {error:.2f} |")
+    report.append("")
+    
+    # Товары с наименьшей ошибкой
+    best_items = test_df.groupby('SKU')['Абс_ошибка'].mean().sort_values().head(5)
+    report.append("### Топ-5 товаров с наименьшей ошибкой\n")
+    report.append("| SKU | Средняя абсолютная ошибка |")
+    report.append("|-----|----------------------------|")
+    for sku, error in best_items.items():
+        report.append(f"| {sku} | {error:.2f} |")
+    report.append("")
+    
+    # Информация о модели
+    report.append("## Информация о модели\n")
+    report.append("Ансамбль из трех моделей машинного обучения:")
+    report.append(f"* LightGBM: вес {ensemble_results.get('lgb_weight', 0):.2f}")
+    report.append(f"* XGBoost: вес {ensemble_results.get('xgb_weight', 0):.2f}")
+    report.append(f"* CatBoost: вес {ensemble_results.get('cat_weight', 0):.2f}")
+    
+    # Сохраняем отчет в файл
+    with open('sales_forecast_report.md', 'w', encoding='utf-8') as f:
+        f.write('\n'.join(report))
+    
+    print("DEBUG: Отчет сохранен в файл 'sales_forecast_report.md'")
+    return report
+
+# ================================================
+# 7. Основная функция запуска прогнозирования
+# ================================================
+def run_sales_forecast(test_size_days=30, forecast_days=30, n_trials=30, save_model=True):
+    """Основная функция запуска процесса прогнозирования продаж"""
+    print("DEBUG: Запуск прогнозирования продаж")
+    
+    # 1. Загрузка и обработка данных
+    sales_df, holidays_df, promotions_df = load_data()
+    
+    # 2. Инженерия признаков
+    processed_df = feature_engineering(sales_df, holidays_df, promotions_df)
+    
+    # 3. Подготовка данных для обучения
+    X_train, y_train, X_test, y_test, y_test_original, cat_features, train_df, test_df = prepare_train_test_data(
+        processed_df, test_size_days=test_size_days
+    )
+    
+    # 4. Обучение и оптимизация ансамбля моделей
+    ensemble_results, ensemble_pred = create_ensemble(
+        X_train, y_train, X_test, y_test, cat_features, n_trials
+    )
+    
+    # 5. Сохранение моделей
+    if save_model:
+        save_models(ensemble_results)
+    
+    # 6. Анализ результатов
+    test_df['Предсказано'] = ensemble_pred
+    test_with_pred = analyze_model_performance(ensemble_results, test_df, ensemble_pred, y_test_original)
+    
+    # 7. Анализ важности признаков
+    importance_df = feature_importance_analysis(ensemble_results, X_test)
+    
+    # 8. Расширенная оценка прогноза
+    metrics = forecast_evaluation(test_with_pred)
+    
+    # 9. Анализ сезонности
+    seasonality_data = seasonality_analysis(processed_df)
+    
+    # 10. Поиск аномалий
+    anomalies = anomaly_detection(processed_df)
+    
+    # 11. Генерация отчета
+    generate_sales_report(test_with_pred, ensemble_results, importance_df, metrics, seasonality_data)
+    
+    # 12. Прогноз на будущее
+    if forecast_days > 0:
+        future_forecast = predict_future_sales(
+            ensemble_results, processed_df, holidays_df, promotions_df, days_ahead=forecast_days
+        )
+        future_forecast.to_csv('future_sales_forecast.csv', index=False)
+        print(f"DEBUG: Прогноз на {forecast_days} дней вперед сохранен в 'future_sales_forecast.csv'")
+    
+    print("DEBUG: Процесс прогнозирования завершен")
+    return {
+        'ensemble_results': ensemble_results,
+        'test_with_pred': test_with_pred,
+        'importance': importance_df,
+        'metrics': metrics,
+        'seasonality': seasonality_data,
+        'anomalies': anomalies
+    }
+
+# ================================================
+# 8. Дополнительные функции для интерактивного использования
+# ================================================
+def get_store_performance_summary(df):
+    """Получение сводки по магазинам"""
+    if 'Магазин' not in df.columns:
+        return "Информация о магазинах недоступна"
+    
+    store_summary = df.groupby('Магазин').agg(
+        Средний_объем_продаж=('Чистые_продажи', 'mean'),
+        Общий_объем_продаж=('Чистые_продажи', 'sum'),
+        Кол_во_SKU=('SKU', 'nunique'),
+        Кол_во_транзакций=('Дата', 'count')
+    ).sort_values('Общий_объем_продаж', ascending=False).reset_index()
+    
+    # Добавление нормализованного рейтинга
+    store_summary['Рейтинг'] = store_summary['Общий_объем_продаж'].rank(pct=True).round(3)
+    
+    return store_summary
+
+def get_product_performance_summary(df):
+    """Получение сводки по товарам"""
+    if 'SKU' not in df.columns:
+        return "Информация о товарах недоступна"
+    
+    product_summary = df.groupby('SKU').agg(
+        Средний_объем_продаж=('Чистые_продажи', 'mean'),
+        Общий_объем_продаж=('Чистые_продажи', 'sum'),
+        Кол_во_магазинов=('Магазин', 'nunique'),
+        Кол_во_дней_продаж=('Дата', 'nunique')
+    ).sort_values('Общий_объем_продаж', ascending=False).reset_index()
+    
+    # Добавляем информацию о весовых товарах, если есть
+    if 'Весовой' in df.columns:
+        weight_map = df.groupby('SKU')['Весовой'].first().to_dict()
+        product_summary['Весовой'] = product_summary['SKU'].map(weight_map)
+    
+    return product_summary
+
+def analyze_promotion_effectiveness(df):
+    """Анализ эффективности акций"""
+    if 'Акция_активна' not in df.columns or 'Тип_акции' not in df.columns:
+        return "Информация об акциях недоступна"
+    
+    # Сравнение продаж с акцией и без
+    promo_effect = df.groupby(['SKU', 'Акция_активна']).agg(
+        Средние_продажи=('Чистые_продажи', 'mean'),
+        Кол_во_дней=('Дата', 'nunique')
+    ).reset_index()
+    
+    # Переформатируем данные для удобства анализа
+    promo_effect_pivot = promo_effect.pivot(
+        index='SKU', 
+        columns='Акция_активна', 
+        values=['Средние_продажи', 'Кол_во_дней']
+    )
+    
+    # Заполняем пропуски
+    promo_effect_pivot = promo_effect_pivot.fillna(0)
+    
+    # Создаем удобные имена колонок
+    promo_effect_pivot.columns = [
+        'Продажи_без_акции' if col == ('Средние_продажи', 0)
+        else 'Продажи_с_акцией' if col == ('Средние_продажи', 1)
+        else 'Дней_без_акции' if col == ('Кол_во_дней', 0)
+        else 'Дней_с_акцией'
+        for col in promo_effect_pivot.columns
+    ]
+    
+    # Вычисляем эффект акции
+    promo_effect_pivot['Эффект_акции'] = (
+        promo_effect_pivot['Продажи_с_акцией'] / 
+        promo_effect_pivot['Продажи_без_акции'].replace(0, 1)
+    )
+    
+    # Фильтруем товары, у которых было достаточно дней с акцией
+    promo_effect_summary = promo_effect_pivot[promo_effect_pivot['Дней_с_акцией'] >= 5].reset_index()
+    
+    # Сортируем по эффекту акции
+    promo_effect_summary = promo_effect_summary.sort_values('Эффект_акции', ascending=False)
+    
+    # Анализ по типам акций
+    if 'Тип_акции' in df.columns:
+        promo_type_effect = df.groupby(['Тип_акции']).agg(
+            Средние_продажи=('Чистые_продажи', 'mean'),
+            Кол_во_SKU=('SKU', 'nunique'),
+            Кол_во_дней=('Дата', 'nunique')
+        ).reset_index()
+        
+        # Сравнение с обычными продажами (без акции)
+        avg_sales_no_promo = df[df['Акция_активна'] == 0]['Чистые_продажи'].mean()
+        promo_type_effect['Эффект_типа_акции'] = promo_type_effect['Средние_продажи'] / avg_sales_no_promo
+        
+        # Сортировка по эффективности
+        promo_type_effect = promo_type_effect.sort_values('Эффект_типа_акции', ascending=False)
+    
+    return {'promo_effect_by_sku': promo_effect_summary, 'promo_effect_by_type': promo_type_effect}
+
+def interactive_forecast_query(ensemble_results, holidays_df, promotions_df):
+    """Интерактивный запрос для прогнозирования продаж по конкретным параметрам"""
+    print("\nИнтерактивный прогноз продаж")
+    
+    try:
+        # Запрос данных для прогноза
+        store_id = int(input("Введите ID магазина: "))
+        sku = input("Введите SKU товара: ")
+        
+        days_ahead = int(input("На сколько дней вперед построить прогноз? [1-100]: "))
+        days_ahead = max(1, min(100, days_ahead))  # Ограничиваем диапазон
+        
+        # Получаем последние данные о продажах этого SKU в этом магазине
+        sales_df, _, _ = load_data()
+        
+        # Фильтруем данные по запрошенному магазину и SKU
+        item_data = sales_df[(sales_df['Магазин'] == store_id) & (sales_df['SKU'] == sku)].copy()
+        
+        if item_data.empty:
+            print(f"Нет данных для SKU {sku} в магазине {store_id}")
+            return None
+        
+        # Подготавливаем данные и делаем прогноз
+        processed_df = feature_engineering(sales_df, holidays_df, promotions_df)
+        item_data_processed = processed_df[(processed_df['Магазин'] == store_id) & (processed_df['SKU'] == sku)].copy()
+        
+        forecast_result = predict_future_sales(
+            ensemble_results, item_data_processed, holidays_df, promotions_df, days_ahead=days_ahead
+        )
+        
+        print(f"\nПрогноз продаж для SKU {sku} в магазине {store_id} на {days_ahead} дней:")
+        print(forecast_result[['Дата', 'Прогноз_продаж']])
+        
+        return forecast_result
+    
+    except Exception as e:
+        print(f"Ошибка при выполнении интерактивного запроса: {e}")
+        return None
+
+if __name__ == "__main__":
+    import argparse
+
+    parser = argparse.ArgumentParser(description="Прогнозирование продаж")
+    parser.add_argument("--test_days", type=int, default=30, help="Количество дней для теста")
+    parser.add_argument("--forecast_days", type=int, default=30, help="Горизонт прогноза")
+    parser.add_argument("--trials", type=int, default=30, help="Количество итераций Optuna")
+    parser.add_argument("--interactive", action="store_true", help="Режим анализа и визуализации")
+
+    args = parser.parse_args()
+
+    # 1. Загрузка данных
+    sales_df, holidays_df, promotions_df = load_data()
+
+    # 2. Feature engineering
+    sales_df = feature_engineering(sales_df, holidays_df, promotions_df)
+
+    # 3. Подготовка данных
+    X_train, y_train, X_test, y_test, y_test_original, cat_features, train_df, test_df = prepare_train_test_data(
+        sales_df, test_size_days=args.test_days
+    )
+
+    # 4. Обучение и ансамблирование
+    ensemble_results, ensemble_pred = create_ensemble(
+        X_train, y_train, X_test, y_test, cat_features=cat_features, n_trials=args.trials
+    )
+
+    # 5. Анализ, если включён интерактивный режим
+    if args.interactive:
+        test_df = analyze_model_performance(ensemble_results, test_df, ensemble_pred, y_test_original)
+        feature_importance_analysis(ensemble_results, X_test)
+        forecast_evaluation(test_df)
+        seasonality_analysis(train_df)
+
+    # 6. Сохранение моделей
+    save_models(ensemble_results)
