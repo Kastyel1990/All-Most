@@ -568,8 +568,9 @@ def optimize_lightgbm(X_train, y_train, X_test, y_test, cat_features=None, n_tri
                 train_data,
                 valid_sets=[valid_data],
                 num_boost_round=10000,
-                callbacks=[lgb.early_stopping(100)],
-                verbose_eval=False
+                callbacks=[
+                    lgb.early_stopping(100),
+                    lgb.log_evaluation(period=100)]
             )
             
             # Предсказание и обратная трансформация
@@ -612,7 +613,7 @@ def optimize_lightgbm(X_train, y_train, X_test, y_test, cat_features=None, n_tri
         best_params,
         train_data,
         num_boost_round=10000,
-        verbose_eval=100
+        callbacks=[lgb.log_evaluation(period=100)]
     )
     
     # Предсказание и оценка на тестовом наборе
@@ -680,7 +681,7 @@ def optimize_xgboost(X_train, y_train, X_test, y_test, n_trials=50):
                 dtrain,
                 num_boost_round=10000,
                 evals=[(dvalid, 'validation')],
-                callbacks=[lgb.early_stopping(100)],
+                callbacks=[xgb.early_stopping(100)],
                 verbose_eval=False
             )
             
@@ -799,8 +800,8 @@ def optimize_catboost(X_train, y_train, X_test, y_test, cat_features=None, n_tri
             model.fit(
                 train_pool,
                 eval_set=valid_pool,
-                callbacks=[lgb.early_stopping(100)],
-                verbose=False
+                early_stopping_rounds=100,
+                verbose=0
             )
             
             # Предсказание и обратная трансформация
