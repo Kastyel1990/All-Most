@@ -490,6 +490,10 @@ def prepare_train_test_data(df, test_size_days=30, target_col='Чистые_пр
     
     X_test = test_df[feature_cols]
     y_test = test_df[transformed_target]
+
+    for df in [X_train, X_test]:
+        for col in df.select_dtypes(include='object').columns:
+            df[col] = df[col].astype('category')
     
     # Сохраняем оригинальные значения для обратного преобразования
     y_test_original = test_df[target_col]
