@@ -75,8 +75,15 @@ def load_data():
     return sales, holidays, promotions
 
 def add_advanced_features(df, holidays_df, promotions_df):
-    print("\n--- DEBUG: Начало расширенного создания признаков ---")
+    """
+    Добавляет расширенные признаки в датафрейм продаж.
+    ВНИМАНИЕ: функция оптимизирована по скорости и памяти.
+    """
+    import time
     t0 = time.time()
+    print("\n--- DEBUG: Начало расширенного создания признаков ---")
+
+    # Скидка и флаги акций
     df['Скидка_фактическая'] = 1 - (df['Цена_со_скидкой'] / df['Цена_без_скидки'].replace(0, np.nan))
     df['Скидка_фактическая'] = df['Скидка_фактическая'].fillna(0).clip(0, 1)
     df['Была_ли_скидка'] = (df['Цена_со_скидкой'] < df['Цена_без_скидки']).astype('int8')
@@ -86,9 +93,11 @@ def add_advanced_features(df, holidays_df, promotions_df):
     df['Тип_акции_расширенный'] = df['Номер_акции'].map(promo_typemap).fillna('Нет акции')
     df['Является_уценкой'] = df['Номер_акции'].map(clearance_map).fillna(0).astype('int8')
 
+    
     df = df.sort_values(['SKU', 'Магазин', 'Дата'])
     group = df.groupby(['SKU', 'Магазин'], observed=False)
 
+    # Скользящие признаки по продажам
     for w in [3, 7, 30]:
         print(f"  [add_advanced_features] Rolling: window={w}")
         t1 = time.time()
@@ -98,7 +107,8 @@ def add_advanced_features(df, holidays_df, promotions_df):
         df[f'Rolling_count_{w}'] = group['Чистые_продажи'].transform(lambda x: x.rolling(w, min_periods=1).count())
         print(f"    ...done in {time.time()-t1:.1f}s")
 
-    holidays_set = set(holidays_df['Дата'])
+    # Признаки по праздникам
+    holidays_set = set(pd.to_datetime(holidays_df['Дата']))
     print("  [add_advanced_features] Считаем признаки близости к праздникам...")
     df['Дней_до_праздника'] = df['Дата'].apply(
         lambda x: min([(h - x).days for h in holidays_set if h >= x] + [999])
@@ -108,29 +118,38 @@ def add_advanced_features(df, holidays_df, promotions_df):
     )
 
     print("  [add_advanced_features] Считаем уникальные акции за 30 дней (ускоренный способ)...")
-    # Быстрая векторизованная версия подсчета уникальных акций за 30 дней для каждой группы
-    # Работает через преобразование в одномерный массив с индексами дат
-    df['Акций_за_30д'] = 0
-    for (sku, store), sub_df in group:
-        idx = sub_df.index
-        akc = sub_df['Номер_акции'].values
-        dates = sub_df['Дата'].values
-        result = np.zeros(len(sub_df), dtype=np.int16)
-        last_seen = {}
-        for i in range(len(sub_df)):
-            win_start = dates[i] - np.timedelta64(29, 'D')
-            uniq = set()
-            for j in range(i, -1, -1):
-                if dates[j] < win_start:
-                    break
-                uniq.add(akc[j])
-            result[i] = len(uniq)
-        df.loc[idx, 'Акций_за_30д'] = result
-    print(f"    ...done in {time.time()-t0:.1f}s")
+    # Быстрый подсчет уникальных акций за 30 дней для каждой группы через rolling window
+    df['Дата'] = pd.to_datetime(df['Дата'])
+    def rolling_unique_actions(sub_df):
+        return (
+            sub_df.set_index('Дата')['Номер_акции']
+            .rolling('30D').apply(lambda x: x.nunique(), raw=False)
+            .reset_index(drop=True)
+        )
+    df['Акций_за_30д'] = (
+        df.groupby(['SKU', 'Магазин'], group_keys=False, observed=False)
+        .apply(rolling_unique_actions)
+        .fillna(0)
+        .astype('int16')
+        .values
+    )
 
-    df['Весовой'] = df['Весовой'].astype('int8')
+    # Флаги по весовому и карте клиента (исправление ошибок с типами)
+    if 'Весовой' in df.columns:
+        try:
+            df['Весовой'] = df['Весовой'].fillna(0).astype('int8')
+        except Exception:
+            df['Весовой'] = df['Весовой'].fillna(0).astype('int32')
+    else:
+        df['Весовой'] = 0
+
     if 'Карта_клиента' in df.columns:
-        df['Карта_клиента'] = df['Карта_клиента'].astype('int8')
+        df['Карта_клиента'] = df['Карта_клиента'].fillna(0)
+        # Если значения большие — int32 или str
+        try:
+            df['Карта_клиента'] = df['Карта_клиента'].astype('int32')
+        except OverflowError:
+            df['Карта_клиента'] = df['Карта_клиента'].astype(str)
     else:
         df['Карта_клиента'] = 0
 
@@ -158,8 +177,13 @@ def create_rolling_vectorized(df, windows=[7, 30, 90], target_col='Чистые_
     return df
 
 def create_features_optimized(df, holidays_df, promotions_df):
-    print("\n=== DEBUG: Начало создания временных признаков ===")
+    """
+    Создает временные, лаговые, скользящие и расширенные признаки для модели.
+    """
+    import gc
+    import time
     t0 = time.time()
+    print("\n=== DEBUG: Начало создания временных признаков ===")
     df['День_недели'] = df['Дата'].dt.dayofweek.astype('int8')
     df['Месяц'] = df['Дата'].dt.month.astype('int8')
     df['Год'] = df['Дата'].dt.year.astype('int16')
@@ -183,14 +207,16 @@ def create_features_optimized(df, holidays_df, promotions_df):
 
     print("=== DEBUG: Начало расчета трэндов и среднего по товару ===")
     df['Trend_1_7'] = (df['Lag_1'] - df['MA_7']).astype('float32')
-    df['SKU_mean'] = df.groupby('SKU')['Чистые_продажи'].transform('mean').astype('float32')
+    df['SKU_mean'] = df.groupby('SKU', observed=False)['Чистые_продажи'].transform('mean').astype('float32')
     print("=== DEBUG: Расчет трэндов и среднего по товару закончены ===")
 
     print("=== DEBUG: Дополнительные признаки добавлены ===")
-    df['Цена_отклонение'] = (df['Цена_со_скидкой'] - df.groupby('SKU')['Цена_со_скидкой'].transform('mean')).astype('float32')
+    df['Цена_отклонение'] = (
+        df['Цена_со_скидкой'] - df.groupby('SKU', observed=False)['Цена_со_скидкой'].transform('mean')
+    ).astype('float32')
 
     print("=== DEBUG: Применение лог-преобразования к целевому признаку ===")
-    df['log_Чистые_продажи'] = np.log1p(df['Чистые_продажи'])
+    df['log_Чистые_продажи'] = np.log1p(df['Чистые_продажи'].clip(lower=0))
 
     upper_limit = df['Чистые_продажи'].quantile(0.99)
     df['Чистые_продажи'] = df['Чистые_продажи'].clip(0, upper_limit)
@@ -293,7 +319,7 @@ def train_model_optuna(data, features, categorical_features, n_trials=50, random
                 params, dtrain,
                 valid_sets=[dval],
                 num_boost_round=1000,
-                early_stopping_rounds=50,
+                callbacks=[lgb.early_stopping(50, verbose=False)],
                 verbose_eval=False
             )
             preds = model.predict(X_val, num_iteration=model.best_iteration)
@@ -321,7 +347,7 @@ def train_model_optuna(data, features, categorical_features, n_trials=50, random
         lgb_train,
         num_boost_round=1000,
         valid_sets=[lgb_test],
-        early_stopping_rounds=50,
+        callbacks=[lgb.early_stopping(50, verbose=False)],
         verbose_eval=50
     )
     preds = model.predict(test[features], num_iteration=model.best_iteration)
