@@ -874,9 +874,16 @@ def create_ensemble(X_train, y_train, X_test, y_test, cat_features=None, n_trial
     print("DEBUG: Создание ансамбля моделей")
     
     # Оптимизация и обучение отдельных моделей
+    print("DEBUG: Начало оптимизации LightGBM")
     lgb_model, lgb_params, lgb_pred = optimize_lightgbm(X_train, y_train, X_test, y_test, cat_features, n_trials)
+    gc.collect()
+    print("DEBUG: LightGBM завершен, начинаем XGBoost")
     xgb_model, xgb_params, xgb_pred = optimize_xgboost(X_train, y_train, X_test, y_test, n_trials)
+    gc.collect()
+    print("DEBUG: XGBoost завершен, начинаем CatBoost")
     cb_model, cb_params, cb_pred = optimize_catboost(X_train, y_train, X_test, y_test, cat_features, n_trials)
+    gc.collect()
+    print("DEBUG: CatBoost завершен, начинаем ансамблирование")
     
     # Функция для обратного преобразования предсказаний
     def inverse_transform(y_pred):
