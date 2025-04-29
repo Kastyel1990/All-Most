@@ -13,6 +13,7 @@ from sklearn.preprocessing import StandardScaler, PowerTransformer
 from sklearn.model_selection import TimeSeriesSplit
 from sklearn.pipeline import Pipeline
 from concurrent.futures import ProcessPoolExecutor
+from xgboost.callback import EarlyStopping
 import multiprocessing
 
 # Отключение предупреждений для более чистого вывода
@@ -47,6 +48,10 @@ def load_data():
     promotions = pd.read_csv('data/promotions.csv', parse_dates=['Дата_начала', 'Дата_окончания'], dayfirst=True)
     holidays = pd.read_csv('data/holidays.csv', parse_dates=['Дата'])
     
+    ###############################################################################
+    sales = sales.head(100_000)  # Ограничить размер для теста
+    ###############################################################################
+
     # Если есть информация о категориях товаров - загрузим её
     try:
         products = pd.read_csv('data/products.csv')
@@ -586,13 +591,15 @@ def optimize_lightgbm(X_train, y_train, X_test, y_test, cat_features=None, n_tri
             fold_rmse = rmse(valid_true, valid_pred)
             scores.append(fold_rmse)
         
+        print("DEBUG: optimize_lightgbm завершена, возвращаем модель")
         # Возвращаем среднее значение метрики для всех фолдов
         return np.mean(scores)
     
     # Создание Optuna исследования для оптимизации
     study = optuna.create_study(direction='minimize')
+
     study.optimize(objective, n_trials=n_trials)
-    
+
     # Лучшие параметры
     best_params = study.best_params
     print(f"DEBUG: Лучшие параметры LightGBM: {best_params}")
@@ -640,6 +647,16 @@ def optimize_xgboost(X_train, y_train, X_test, y_test, n_trials=50):
     """Оптимизация гиперпараметров XGBoost с использованием Optuna"""
     print("DEBUG: Начало оптимизации XGBoost")
     
+    # Кодировка категориальных признаков
+    def encode_cats(df):
+        df = df.copy()
+        for col in df.select_dtypes(include='category').columns:
+            df[col] = df[col].cat.codes
+        return df
+    
+    X_train_enc = encode_cats(X_train)
+    X_test_enc = encode_cats(X_test)
+
     # Функция для обратного преобразования предсказаний
     def inverse_transform(y_pred):
         return np.expm1(y_pred)
@@ -671,8 +688,8 @@ def optimize_xgboost(X_train, y_train, X_test, y_test, n_trials=50):
         tscv = TimeSeriesSplit(n_splits=5)
         scores = []
         
-        for train_idx, valid_idx in tscv.split(X_train):
-            X_train_fold, X_valid_fold = X_train.iloc[train_idx], X_train.iloc[valid_idx]
+        for train_idx, valid_idx in tscv.split(X_train_enc):
+            X_train_fold, X_valid_fold = X_train_enc.iloc[train_idx], X_train_enc.iloc[valid_idx]
             y_train_fold, y_valid_fold = y_train.iloc[train_idx], y_train.iloc[valid_idx]
             
             # Создание DMatrix для XGBoost
@@ -685,7 +702,7 @@ def optimize_xgboost(X_train, y_train, X_test, y_test, n_trials=50):
                 dtrain,
                 num_boost_round=10000,
                 evals=[(dvalid, 'validation')],
-                callbacks=[xgb.early_stopping(100)],
+                callbacks=[EarlyStopping(rounds=100)],
                 verbose_eval=False
             )
             
@@ -717,8 +734,8 @@ def optimize_xgboost(X_train, y_train, X_test, y_test, n_trials=50):
     best_params['random_state'] = 42
     
     # Создание датасета
-    dtrain = xgb.DMatrix(X_train, label=y_train)
-    dtest = xgb.DMatrix(X_test, label=y_test)
+    dtrain = xgb.DMatrix(X_train_enc, label=y_train)
+    dtest = xgb.DMatrix(X_test_enc, label=y_test)
     
     # Обучение финальной модели
     final_model = xgb.train(
@@ -726,7 +743,7 @@ def optimize_xgboost(X_train, y_train, X_test, y_test, n_trials=50):
         dtrain,
         num_boost_round=10000,
         evals=[(dtest, 'test')],
-        callbacks=[lgb.early_stopping(100)],
+        callbacks=[EarlyStopping(100)],
         verbose_eval=100
     )
     
@@ -749,24 +766,17 @@ def optimize_xgboost(X_train, y_train, X_test, y_test, n_trials=50):
 def optimize_catboost(X_train, y_train, X_test, y_test, cat_features=None, n_trials=50):
     """Оптимизация гиперпараметров CatBoost с использованием Optuna"""
     print("DEBUG: Начало оптимизации CatBoost")
-    
+
     # Функция для обратного преобразования предсказаний
     def inverse_transform(y_pred):
         return np.expm1(y_pred)
-    
+
     # Функция для вычисления RMSE
     def rmse(y_true, y_pred):
         return np.sqrt(mean_squared_error(y_true, y_pred))
-    
-    # Преобразование имен категориальных признаков в индексы
-    if cat_features:
-        cat_features_indices = [X_train.columns.get_loc(col) for col in cat_features if col in X_train.columns]
-    else:
-        cat_features_indices = None
-    
+
     # Функция для оптимизации
     def objective(trial):
-        # Параметры для оптимизации
         params = {
             'loss_function': 'RMSE',
             'eval_metric': 'RMSE',
@@ -781,25 +791,26 @@ def optimize_catboost(X_train, y_train, X_test, y_test, cat_features=None, n_tri
             'task_type': 'CPU',
             'thread_count': 32
         }
-        
+
         if params['bootstrap_type'] == 'Bayesian':
             params['bagging_temperature'] = trial.suggest_float('bagging_temperature', 0, 10)
         elif params['bootstrap_type'] == 'Bernoulli':
             params['subsample'] = trial.suggest_float('subsample', 0.5, 1)
-        
+
         # Кросс-валидация с учетом временных рядов
         tscv = TimeSeriesSplit(n_splits=5)
         scores = []
-        
+
         for train_idx, valid_idx in tscv.split(X_train):
             X_train_fold, X_valid_fold = X_train.iloc[train_idx], X_train.iloc[valid_idx]
             y_train_fold, y_valid_fold = y_train.iloc[train_idx], y_train.iloc[valid_idx]
-            
-            # Создание датасетов CatBoost
-            train_pool = cb.Pool(X_train_fold, label=y_train_fold, cat_features=cat_features_indices)
-            valid_pool = cb.Pool(X_valid_fold, label=y_valid_fold, cat_features=cat_features_indices)
-            
-            # Обучение модели
+
+            # Получаем список всех категориальных колонок для этого разбиения
+            cat_features_fold = X_train_fold.select_dtypes(include='category').columns.tolist()
+
+            train_pool = cb.Pool(X_train_fold, label=y_train_fold, cat_features=cat_features_fold)
+            valid_pool = cb.Pool(X_valid_fold, label=y_valid_fold, cat_features=cat_features_fold)
+
             model = cb.CatBoostRegressor(**params)
             model.fit(
                 train_pool,
@@ -807,27 +818,23 @@ def optimize_catboost(X_train, y_train, X_test, y_test, cat_features=None, n_tri
                 early_stopping_rounds=100,
                 verbose=0
             )
-            
-            # Предсказание и обратная трансформация
+
             valid_pred = model.predict(X_valid_fold)
             valid_pred = inverse_transform(valid_pred)
             valid_true = inverse_transform(y_valid_fold)
-            
-            # Расчет метрик
+
             fold_rmse = rmse(valid_true, valid_pred)
             scores.append(fold_rmse)
-        
-        # Возвращаем среднее значение метрики для всех фолдов
+
         return np.mean(scores)
-    
+
     # Создание Optuna исследования для оптимизации
     study = optuna.create_study(direction='minimize')
     study.optimize(objective, n_trials=n_trials)
-    
-    # Лучшие параметры
+
     best_params = study.best_params
     print(f"DEBUG: Лучшие параметры CatBoost: {best_params}")
-    
+
     # Создание финальной модели с лучшими параметрами
     best_params['loss_function'] = 'RMSE'
     best_params['eval_metric'] = 'RMSE'
@@ -836,34 +843,33 @@ def optimize_catboost(X_train, y_train, X_test, y_test, cat_features=None, n_tri
     best_params['random_seed'] = 42
     best_params['allow_writing_files'] = False
     best_params['task_type'] = 'CPU'
-    
-    # Создание датасетов
-    train_pool = cb.Pool(X_train, label=y_train, cat_features=cat_features_indices)
-    test_pool = cb.Pool(X_test, label=y_test, cat_features=cat_features_indices)
-    
-    # Обучение финальной модели
+
+    # Получаем список всех категориальных признаков для train/test
+    final_cat_features = X_train.select_dtypes(include='category').columns.tolist()
+
+    train_pool = cb.Pool(X_train, label=y_train, cat_features=final_cat_features)
+    test_pool = cb.Pool(X_test, label=y_test, cat_features=final_cat_features)
+
     final_model = cb.CatBoostRegressor(**best_params)
     final_model.fit(
         train_pool,
         eval_set=test_pool,
-        callbacks=[lgb.early_stopping(100)],
+        early_stopping_rounds=100,
         verbose=100
     )
-    
-    # Предсказание и оценка на тестовом наборе
+
     test_pred = final_model.predict(X_test)
     test_pred_inv = inverse_transform(test_pred)
     test_true_inv = inverse_transform(y_test)
-    
-    # Метрики
+
     test_rmse = rmse(test_true_inv, test_pred_inv)
     test_mae = mean_absolute_error(test_true_inv, test_pred_inv)
     test_mapd = np.mean(np.abs((test_true_inv - test_pred_inv) / (test_true_inv + 1e-7))) * 100
-    
+
     print(f"DEBUG: CatBoost Test RMSE: {test_rmse:.4f}")
     print(f"DEBUG: CatBoost Test MAE: {test_mae:.4f}")
     print(f"DEBUG: CatBoost Test MAPD: {test_mapd:.4f}%")
-    
+
     return final_model, best_params, test_pred_inv
 
 # ================================================
@@ -1073,7 +1079,7 @@ def feature_importance_analysis(ensemble_results, X_test):
         all_features.update(imp.index)
     
     # Создаем DataFrame для хранения всех рейтингов
-    importance_df = pd.DataFrame(index=all_features)
+    importance_df = pd.DataFrame(index=sorted(all_features))  # сортировка для красоты
     
     # Заполняем DataFrame данными важности признаков из каждой модели
     for model_name, imp in importances.items():
