@@ -319,8 +319,8 @@ def train_model_optuna(data, features, categorical_features, n_trials=50, random
                 params, dtrain,
                 valid_sets=[dval],
                 num_boost_round=1000,
-                callbacks=[lgb.early_stopping(50, verbose=False)],
-                verbose_eval=False
+                callbacks=[lgb.early_stopping(50, verbose=False),
+                           lgb.log_evaluation(period=100)]
             )
             preds = model.predict(X_val, num_iteration=model.best_iteration)
             maes.append(mean_absolute_error(y_val, preds))
@@ -347,8 +347,8 @@ def train_model_optuna(data, features, categorical_features, n_trials=50, random
         lgb_train,
         num_boost_round=1000,
         valid_sets=[lgb_test],
-        callbacks=[lgb.early_stopping(50, verbose=False)],
-        verbose_eval=50
+        callbacks=[lgb.early_stopping(50, verbose=False),
+                   lgb.log_evaluation(period=100)]        
     )
     preds = model.predict(test[features], num_iteration=model.best_iteration)
     mae = mean_absolute_error(test[target], preds)
@@ -359,7 +359,7 @@ def train_model_optuna(data, features, categorical_features, n_trials=50, random
 # ================================================
 # 7. Сохранение модели
 # ================================================
-def save_model(model, data, features, categorical_features, model_path='sales_lgbm_model.pkl'):
+def save_model(model, data, features, categorical_features, model_path='sales_lgbm_gpt_model.pkl'):
     """
     Сохраняет LightGBM модель и метаинформацию для последующего использования.
     """
@@ -386,7 +386,7 @@ def prepare_categoricals_for_inference(df, category_maps, categorical_features):
             df[col] = pd.Categorical(df[col], categories=list(category_maps[col].values()))
     return df
 
-def predict_from_dataframe(df, model_path='sales_lgbm_model.pkl'):
+def predict_from_dataframe(df, model_path='sales_lgbm_gpt_model.pkl'):
     """
     Делает предсказание для датафрейма df с признаками, аналогичными обучению.
     Возвращает массив предсказаний.
@@ -412,7 +412,7 @@ def predict_from_dataframe(df, model_path='sales_lgbm_model.pkl'):
     preds = np.clip(preds, 0, None)
     return preds
 
-def predict_from_csv(input_csv, output_csv='predictions.csv', model_path='sales_lgbm_model.pkl'):
+def predict_from_csv(input_csv, output_csv='predictions.csv', model_path='sales_lgbm_gpt_model.pkl'):
     """
     Массовое предсказание: читает данные из CSV (с нужными признаками), делает предсказания, сохраняет результат.
     """
@@ -422,7 +422,7 @@ def predict_from_csv(input_csv, output_csv='predictions.csv', model_path='sales_
     df.to_csv(output_csv, index=False)
     print(f"Результаты сохранены в {output_csv}")
 
-def predict_single_case(feature_dict, model_path='sales_lgbm_model.pkl'):
+def predict_single_case(feature_dict, model_path='sales_lgbm_gpt_model.pkl'):
     """
     Предсказание для одного случая: подайте dict признаков как на обучении.
     """
@@ -430,7 +430,7 @@ def predict_single_case(feature_dict, model_path='sales_lgbm_model.pkl'):
     preds = predict_from_dataframe(df, model_path=model_path)
     return preds[0]
 
-def auto_generate_features(raw_cases, model_path='sales_lgbm_model.pkl', min_date='2020-01-01'):
+def auto_generate_features(raw_cases, model_path='sales_lgbm_gpt_model.pkl', min_date='2020-01-01'):
     """
     Автоматически достраивает недостающие признаки для предсказания продаж.
     """
@@ -500,16 +500,16 @@ def auto_generate_features(raw_cases, model_path='sales_lgbm_model.pkl', min_dat
 # 6. Пример основного пайплайна
 # ================================================
 if __name__ == '__main__':
-    print("Загрузка и обработка данных...")
-    data, holidays, promotions = load_data()
-    data = create_features_optimized(data, holidays, promotions)
-    data = prepare_categoricals(data, categorical_features)
+    # print("Загрузка и обработка данных...")
+    # data, holidays, promotions = load_data()
+    # data = create_features_optimized(data, holidays, promotions)
+    # data = prepare_categoricals(data, categorical_features)
 
-    model, best_params, mae, test, preds = train_model_optuna(
-        data, features, categorical_features, n_trials=1
-    )
+    # model, best_params, mae, test, preds = train_model_optuna(
+    #     data, features, categorical_features, n_trials=1
+    # )
 
-    save_model(model, data, features, categorical_features, 'sales_lgbm_gpt_model.pkl')
+    # save_model(model, data, features, categorical_features, 'sales_lgbm_gpt_model.pkl')
 
     ###############################################################################
     # Подготовить файл input_cases.csv с колонками:
@@ -547,8 +547,8 @@ if __name__ == '__main__':
         }
     ]
     # Автогенерация фичей
-    df_ready = auto_generate_features(cases, model_path="sales_lgbm_model.pkl", min_date="2020-01-01")
-    predictions = predict_from_dataframe(df_ready, model_path="sales_lgbm_model.pkl")
+    df_ready = auto_generate_features(cases, model_path="sales_lgbm_gpt_model.pkl", min_date="2020-01-01")
+    predictions = predict_from_dataframe(df_ready, model_path="sales_lgbm_gpt_model.pkl")
     for i, pred in enumerate(predictions):
         print(f"SKU={cases[i]['SKU']} Магазин={cases[i]['Магазин']} Дата={cases[i]['Дата']} -> Прогноз={pred:.2f}")
 
