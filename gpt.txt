@@ -27,6 +27,10 @@ def load_data():
     promotions = pd.read_csv('data/promotions.csv', parse_dates=['Дата_начала', 'Дата_окончания'], dayfirst=True)
     holidays = pd.read_csv('data/holidays.csv', parse_dates=['Дата'])
 
+    ###############################################################################
+    sales = sales.head(100_000)  # Ограничить размер для теста
+    ###############################################################################
+
     print(f"[{time.time() - t0:.1f}s] Основные файлы загружены.")
     promotions['Это_уценка'] = clean_column_to_int(promotions['Это_уценка'])
     print(f"[{time.time() - t0:.1f}s] 'Это_уценка' очищена.")
@@ -120,19 +124,15 @@ def add_advanced_features(df, holidays_df, promotions_df):
     print("  [add_advanced_features] Считаем уникальные акции за 30 дней (ускоренный способ)...")
     # Быстрый подсчет уникальных акций за 30 дней для каждой группы через rolling window
     df['Дата'] = pd.to_datetime(df['Дата'])
-    def rolling_unique_actions(sub_df):
-        return (
-            sub_df.set_index('Дата')['Номер_акции']
-            .rolling('30D').apply(lambda x: x.nunique(), raw=False)
-            .reset_index(drop=True)
-        )
+    df = df.sort_values(['SKU', 'Магазин', 'Дата']).copy()
+    df.set_index('Дата', inplace=True)
     df['Акций_за_30д'] = (
-        df.groupby(['SKU', 'Магазин'], group_keys=False, observed=False)
-        .apply(rolling_unique_actions)
+        df.groupby(['SKU', 'Магазин'], group_keys=False)['Номер_акции']
+        .transform(lambda s: s.rolling('30D').apply(lambda x: x.nunique(), raw=False))
         .fillna(0)
         .astype('int16')
-        .values
     )
+    df.reset_index(inplace=True)
 
     # Флаги по весовому и карте клиента (исправление ошибок с типами)
     if 'Весовой' in df.columns:
@@ -430,93 +430,131 @@ def predict_single_case(feature_dict, model_path='sales_lgbm_gpt_model.pkl'):
     preds = predict_from_dataframe(df, model_path=model_path)
     return preds[0]
 
-def auto_generate_features(raw_cases, model_path='sales_lgbm_gpt_model.pkl', min_date='2020-01-01'):
+def prepare_inference_features(
+    case,
+    sales_df,
+    holidays_df,
+    promotions_df,
+    model_path="sales_lgbm_gpt_model.pkl",
+    history_window=90,
+    min_date="2020-01-01"
+):
     """
-    Автоматически достраивает недостающие признаки для предсказания продаж.
+    Формирует фичи для предсказания по одному кейсу, используя историю из sales_df.
+    case: dict с минимумом ('SKU', 'Магазин', 'Дата', 'Цена_со_скидкой', ...)
+    sales_df: DataFrame с полной историей продаж
+    holidays_df, promotions_df: как на обучении
+    model_path: путь к модели (для загрузки списка нужных признаков)
+    Возвращает: DataFrame с одной строкой, готовой для predict_from_dataframe
     """
-    # Загрузка meta-информации модели
+    # Загрузка метаинформации (features/categorical_features)
     model_data = joblib.load(model_path)
     features = model_data['features']
     categorical_features = model_data['categorical_features']
     category_maps = model_data['category_maps']
 
-    # Создание DataFrame из минимального ввода
-    df = pd.DataFrame(raw_cases)
-    if 'Дата' in df.columns:
-        df['Дата'] = pd.to_datetime(df['Дата'])
+    sku = str(case['SKU'])
+    shop = str(case['Магазин'])
+    date_pred = pd.to_datetime(case['Дата'])
 
-    # Автоматически рассчитываем временные признаки
-    if 'День_недели' in features:
-        df['День_недели'] = df['Дата'].dt.dayofweek
-    if 'Месяц' in features:
-        df['Месяц'] = df['Дата'].dt.month
-    if 'Год' in features:
-        df['Год'] = df['Дата'].dt.year
-    if 'День_года' in features:
-        df['День_года'] = df['Дата'].dt.dayofyear
-    if 'Sin_День' in features:
-        df['Sin_День'] = np.sin(2 * np.pi * df['Дата'].dt.dayofyear / 365)
-    if 'Cos_День' in features:
-        df['Cos_День'] = np.cos(2 * np.pi * df['Дата'].dt.dayofyear / 365)
-    if 'Дни_с_начала' in features:
-        min_dt = pd.to_datetime(min_date)
-        df['Дни_с_начала'] = (df['Дата'] - min_dt).dt.days
+    # 1. Вытаскиваем хвост истории по SKU и магазину
+    history = sales_df[
+        (sales_df['SKU'] == sku) &
+        (sales_df['Магазин'] == shop) &
+        (sales_df['Дата'] < date_pred) &
+        (sales_df['Дата'] >= date_pred - pd.Timedelta(days=history_window))
+    ].copy()
 
-    # Бинарные и категориальные, если не заданы
-    if 'Праздник' in features and 'Праздник' not in df.columns:
-        df['Праздник'] = 0
-    if 'Выходной' in features and 'Выходной' not in df.columns:
-        df['Выходной'] = (df['День_недели'] >= 5).astype(int)
-    if 'Выходной_день' in features and 'Выходной_день' not in df.columns:
-        df['Выходной_день'] = df['Выходной']
+    # 2. Добавляем день прогноза (case_row)
+    # Заполняем все ключевые поля, остальные - по желанию или 0
+    case_row = {
+        'SKU': sku,
+        'Магазин': shop,
+        'Дата': date_pred,
+        'Цена_со_скидкой': case.get('Цена_со_скидкой', 0),
+        'Цена_без_скидки': case.get('Цена_без_скидки', case.get('Цена_со_скидкой', 0)),
+        'Номер_акции': case.get('Номер_акции', 0),
+        'Процент_скидки': case.get('Процент_скидки', 0),
+        'Промо_код': case.get('Промо_код', np.nan)
+        # Добавь другие поля, если нужно!
+    }
+    df_full = pd.concat([history, pd.DataFrame([case_row])], ignore_index=True)
 
-    if 'Тип_акции' in features and 'Тип_акции' not in df.columns:
-        df['Тип_акции'] = "Нет акции"
-    if 'Тип_акции_расширенный' in features and 'Тип_акции_расширенный' not in df.columns:
-        df['Тип_акции_расширенный'] = "Нет акции"
-    if 'Праздник_тип' in features and 'Праздник_тип' not in df.columns:
-        df['Праздник_тип'] = "Нет"
+    # 3. Генерируем признаки (как на обучении)
+    # ВАЖНО: используем тот же пайплайн!
+    df_full = create_features_optimized(df_full, holidays_df, promotions_df)
 
-    # Другие признаки по умолчанию
-    for f in features:
-        if f not in df.columns:
-            df[f] = 0
-
-    # SKU и Магазин как строка-категория
-    if 'SKU' in df.columns:
-        df['SKU'] = df['SKU'].astype(str)
-    if 'Магазин' in df.columns:
-        df['Магазин'] = df['Магазин'].astype(str)
-
-    # Категориальные признаки — к нужным категориям
+    # 4. Приводим категориальные (как на инференсе)
     for col in categorical_features:
-        if col in df.columns and col in category_maps:
-            df[col] = pd.Categorical(df[col], categories=list(category_maps[col].values()))
+        if col in df_full.columns and col in category_maps:
+            df_full[col] = pd.Categorical(df_full[col], categories=list(category_maps[col].values()))
 
-    df = df[features]
-    return df
+    # 5. Оставляем только день прогноза
+    result_row = df_full[df_full['Дата'] == date_pred].copy()
+    # Обеспечиваем нужный порядок и наличие всех фичей (для совместимости с моделью)
+    for f in features:
+        if f not in result_row.columns:
+            result_row[f] = 0
+    result_row = result_row[features]
+    return result_row
+
+def batch_predict_cases(
+    cases,
+    sales_df,
+    holidays_df,
+    promotions_df,
+    model_path="sales_lgbm_gpt_model.pkl",
+    history_window=90,
+    min_date="2020-01-01"
+):
+    """
+    cases: список dict-ов (SKU, Магазин, Дата, Цена_со_скидкой, ...)
+    sales_df: история продаж (полный df)
+    Возвращает: DataFrame с исходными кейсами и колонкой 'Прогноз'
+    """
+    results = []
+    for case in cases:
+        row = prepare_inference_features(
+            case,
+            sales_df,
+            holidays_df,
+            promotions_df,
+            model_path=model_path,
+            history_window=history_window,
+            min_date=min_date
+        )
+        results.append(row)
+    df_ready = pd.concat(results, ignore_index=True)
+    # Предсказание
+    preds = predict_from_dataframe(df_ready, model_path=model_path)
+    # Собираем результат
+    df_cases = pd.DataFrame(cases)
+    df_cases['Прогноз'] = preds
+    return df_cases
 
 # ================================================
 # 6. Пример основного пайплайна
 # ================================================
 if __name__ == '__main__':
-    # print("Загрузка и обработка данных...")
-    # data, holidays, promotions = load_data()
-    # data = create_features_optimized(data, holidays, promotions)
-    # data = prepare_categoricals(data, categorical_features)
+    print("Загрузка и обработка данных...")
+    # 1. Загрузка и подготовка данных для обучения
+    data, holidays, promotions = load_data()
+    data = create_features_optimized(data, holidays, promotions)
+    data = prepare_categoricals(data, categorical_features)
 
+    # 2. Обучение модели
     # model, best_params, mae, test, preds = train_model_optuna(
     #     data, features, categorical_features, n_trials=1
     # )
-
     # save_model(model, data, features, categorical_features, 'sales_lgbm_gpt_model.pkl')
 
     ###############################################################################
-    # Подготовить файл input_cases.csv с колонками:
-    # SKU, Магазин, Дата, Цена, Акция_активна, Тип_акции, Процент_скидки, Праздник.
-    # predict_from_csv('input_cases.csv')
+    # ПРИМЕР ИНФЕРЕНСА С ИСТОРИЕЙ: прогноз на будущее с учетом реальных rolling/lag
     ###############################################################################
+    # 3. Загрузка истории для прогноза (тот же sales.csv, как и для обучения)
+    sales_history = data.copy()  # или pd.read_csv('data/sales.csv', parse_dates=['Дата']), если нужно
 
+    # 4. Список кейсов для предсказания
     cases = [
         {
             "SKU": 373467,
@@ -546,10 +584,22 @@ if __name__ == '__main__':
             "Цена_со_скидкой": 69.90,
         }
     ]
-    # Автогенерация фичей
-    df_ready = auto_generate_features(cases, model_path="sales_lgbm_gpt_model.pkl", min_date="2020-01-01")
-    predictions = predict_from_dataframe(df_ready, model_path="sales_lgbm_gpt_model.pkl")
-    for i, pred in enumerate(predictions):
-        print(f"SKU={cases[i]['SKU']} Магазин={cases[i]['Магазин']} Дата={cases[i]['Дата']} -> Прогноз={pred:.2f}")
+
+    # 5. БАТЧ-ПРОГНОЗ с учетом истории (rolling/lag features живые!)
+    df_preds = batch_predict_cases(
+        cases,
+        sales_history,
+        holidays,
+        promotions,
+        model_path="sales_lgbm_gpt_model.pkl",
+        history_window=90,
+        min_date="2020-01-01"
+    )
+
+    # 6. Красивый вывод результатов
+    for i, row in df_preds.iterrows():
+        print(
+            f"SKU={row['SKU']} Магазин={row['Магазин']} Дата={row['Дата']} -> Прогноз={row['Прогноз']:.2f}"
+        )
 
     
