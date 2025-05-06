@@ -37,7 +37,7 @@ def load_data():
 
     valid_guids = set(sales['GUID_продажи'])
     returns = returns[returns['GUID_продажи'].isin(valid_guids)].copy()
-    returns_agg = returns.groupby(['GUID_продажи', 'SKU', 'Магазин']).agg(
+    returns_agg = returns.groupby(['GUID_продажи', 'SKU', 'Магазин'], observed=False).agg(
         Количество_возвращено=('Количество_возвращено', 'sum')
     ).reset_index()
 
@@ -45,8 +45,8 @@ def load_data():
     sales['Количество_возвращено'] = sales['Количество_возвращено'].fillna(0)
     sales['Чистые_продажи'] = sales['Количество'] - sales['Количество_возвращено']
 
-    sales['Сумма_чека'] = sales.groupby('GUID_продажи')['Цена_со_скидкой'].transform('sum')
-    negative_prices = sales[sales['Цена_со_скидкой'] < 0].groupby('GUID_продажи')['Цена_со_скидкой'].sum()
+    sales['Сумма_чека'] = sales.groupby('GUID_продажи', observed=False)['Цена_со_скидкой'].transform('sum')
+    negative_prices = sales[sales['Цена_со_скидкой'] < 0].groupby('GUID_продажи', observed=False)['Цена_со_скидкой'].sum()
     sales['Сумма_сертификата'] = sales['GUID_продажи'].map(negative_prices).fillna(0).abs()
 
     sales = pd.merge(sales, holidays[['Дата', 'Название_праздника', 'Тип_праздника', 'Выходной']], on='Дата', how='left')
@@ -127,7 +127,7 @@ def add_advanced_features(df, holidays_df, promotions_df):
     df = df.sort_values(['SKU', 'Магазин', 'Дата']).copy()
     df.set_index('Дата', inplace=True)
     df['Акций_за_30д'] = (
-        df.groupby(['SKU', 'Магазин'], group_keys=False)['Номер_акции']
+        df.groupby(['SKU', 'Магазин'], group_keys=False, observed=False)['Номер_акции']
         .transform(lambda s: s.rolling('30D').apply(lambda x: x.nunique(), raw=False))
         .fillna(0)
         .astype('int16')
@@ -144,8 +144,10 @@ def add_advanced_features(df, holidays_df, promotions_df):
         df['Весовой'] = 0
 
     if 'Карта_клиента' in df.columns:
-        df['Карта_клиента'] = df['Карта_клиента'].fillna(0)
-        # Если значения большие — int32 или str
+        # Сначала чистим: заменяем пустые строки и строки из пробелов на np.nan
+        df['Карта_клиента'] = df['Карта_клиента'].replace(r'^\s*$', np.nan, regex=True)
+        df['Карта_клиента'] = pd.to_numeric(df['Карта_клиента'], errors='coerce').fillna(0)
+        # Если значения большие — int32, иначе int8
         try:
             df['Карта_клиента'] = df['Карта_клиента'].astype('int32')
         except OverflowError:
