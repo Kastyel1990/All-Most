@@ -547,7 +547,7 @@ def optimize_lightgbm(X_train, y_train, X_test, y_test, cat_features=None, n_tri
             'min_child_samples': trial.suggest_int('min_child_samples', 5, 100),
             'lambda_l1': trial.suggest_float('lambda_l1', 1e-8, 10.0, log=True),
             'lambda_l2': trial.suggest_float('lambda_l2', 1e-8, 10.0, log=True),
-            'n_jobs': 32,
+            'n_jobs': 60,
             'random_state': 42
         }
         
@@ -680,7 +680,7 @@ def optimize_xgboost(X_train, y_train, X_test, y_test, n_trials=50):
             'alpha': trial.suggest_float('alpha', 1e-8, 1.0, log=True),
             'lambda': trial.suggest_float('lambda', 1e-8, 1.0, log=True),
             'gamma': trial.suggest_float('gamma', 1e-8, 1.0, log=True),
-            'n_jobs': 32,
+            'n_jobs': 60,
             'random_state': 42
         }
         
@@ -789,7 +789,7 @@ def optimize_catboost(X_train, y_train, X_test, y_test, cat_features=None, n_tri
             'random_seed': 42,
             'allow_writing_files': False,
             'task_type': 'CPU',
-            'thread_count': 32
+            'thread_count': 60
         }
 
         if params['bootstrap_type'] == 'Bayesian':
@@ -1116,15 +1116,26 @@ def save_models(ensemble_results, file_prefix='retail_sales_'):
     # Сохранение моделей
     for model_name, model in ensemble_results['models'].items():
         if model_name == 'lgb':
-            model.save_model(f"{file_prefix}lgb_model.txt")
+            joblib.dump(model, f"{file_prefix}lgb_model.pkl")
+            #model.save_model(f"{file_prefix}lgb_model.txt")
         elif model_name == 'xgb':
-            model.save_model(f"{file_prefix}xgb_model.json")
+            joblib.dump(model, f"{file_prefix}xgb_model.pkl")
+            #model.save_model(f"{file_prefix}xgb_model.json")
         elif model_name == 'cb':
-            model.save_model(f"{file_prefix}cb_model.cbm")
+            joblib.dump(model, f"{file_prefix}cb_model.pkl")
+            #model.save_model(f"{file_prefix}cb_model.cbm")
     
     # Сохранение параметров и весов ансамбля
     joblib.dump(ensemble_results['params'], f"{file_prefix}model_params.pkl")
     joblib.dump(ensemble_results['weights'], f"{file_prefix}ensemble_weights.pkl")
+
+    # Сохранение списка признаков
+    feature_list = X_train.columns.tolist()
+    joblib.dump(feature_list, f"{file_prefix}feature_list.pkl")
+
+    # Сохранение списка категориальных признаков
+    cat_features = X_train.select_dtypes(include='category').columns.tolist()
+    joblib.dump(cat_features, f"{file_prefix}cat_features.pkl")
     
     print(f"DEBUG: Модели сохранены с префиксом '{file_prefix}'")
 
