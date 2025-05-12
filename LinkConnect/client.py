@@ -120,7 +120,7 @@ def main():
 
     try:
         print(f"[*] Подключение к WebSocket серверу...")
-        ws_url = f"ws://{args.server_host}:8001/agent?token={token}"
+        ws_url = f"ws://{args.server_host}:8000/agent?token={token}"
         ws = websocket.create_connection(
             ws_url,
             header=["Sec-WebSocket-Protocol: binary"]
