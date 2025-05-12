@@ -2,7 +2,6 @@ import subprocess
 import time
 import argparse
 import uuid
-import os
 import shutil
 import socket
 import threading
@@ -103,7 +102,7 @@ def main():
     parser = argparse.ArgumentParser(description="Reverse VNC Agent")
     parser.add_argument("--duration", type=int, default=3600, help="Сколько секунд действует сессия (по умолчанию: 3600)")
     parser.add_argument("--display", default=":0", help="DISPLAY для x11vnc (по умолчанию: :0)")
-    parser.add_argument("--server-host", default="185.105.118.106", help="Хост сервера (по умолчанию: localhost)")
+    parser.add_argument("--server-host", default="127.0.0.1", help="Хост сервера (по умолчанию: localhost)")
     parser.add_argument("--server-port", type=int, default=8000, help="Порт сервера (по умолчанию: 8000)")
     args = parser.parse_args()
 
@@ -120,7 +119,7 @@ def main():
 
     try:
         print(f"[*] Подключение к WebSocket серверу...")
-        ws_url = f"ws://{args.server_host}:8000/agent?token={token}"
+        ws_url = f"ws://{args.server_host}:{args.server_port}/agent?token={token}"
         ws = websocket.create_connection(
             ws_url,
             header=["Sec-WebSocket-Protocol: binary"]
