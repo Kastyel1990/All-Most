@@ -10,9 +10,11 @@ import websocket
 from websocket import create_connection
 
 def is_tool_installed(tool):
+    """Проверяет, установлен ли инструмент."""
     return shutil.which(tool) is not None
 
 def install_tool(tool, pkg_managers):
+    """Устанавливает указанный инструмент."""
     print(f"[*] Установка {tool}...")
     for manager, install_cmd in pkg_managers.items():
         if shutil.which(manager):
@@ -24,6 +26,7 @@ def install_tool(tool, pkg_managers):
     return False
 
 def ensure_dependencies():
+    """Проверяет и устанавливает зависимости."""
     missing = []
     for tool in ["x11vnc"]:
         if not is_tool_installed(tool):
@@ -48,6 +51,7 @@ def ensure_dependencies():
     return True
 
 def start_x11vnc(display=":0", port=5900):
+    """Запускает x11vnc на указанном дисплее и порту."""
     return subprocess.Popen([
         "x11vnc", "-display", display,
         "-rfbport", str(port),
@@ -56,6 +60,7 @@ def start_x11vnc(display=":0", port=5900):
     ])
 
 def find_free_port():
+    """Находит свободный порт."""
     sock = socket.socket()
     sock.bind(('', 0))
     port = sock.getsockname()[1]
@@ -63,11 +68,13 @@ def find_free_port():
     return port
 
 def connect_vnc(port):
+    """Подключается к VNC-серверу на указанном порту."""
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect(("127.0.0.1", port))
     return sock
 
 def tunnel_vnc_to_ws(vnc_sock, ws):
+    """Передает данные из VNC в WebSocket."""
     try:
         while True:
             data = vnc_sock.recv(4096)
@@ -80,6 +87,7 @@ def tunnel_vnc_to_ws(vnc_sock, ws):
         ws.close()
 
 def tunnel_ws_to_vnc(ws, vnc_sock):
+    """Передает данные из WebSocket в VNC."""
     try:
         while True:
             data = ws.recv()
