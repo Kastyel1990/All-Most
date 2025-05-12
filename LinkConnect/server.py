@@ -2,7 +2,7 @@ import asyncio
 import websockets
 import aiohttp
 from aiohttp import web
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import parse_qs
 
 agent_connections = {}  # token -> websocket
 
@@ -66,33 +66,41 @@ async def client_ws_handler(request):
     return ws_browser
 
 # WebSocket: agent connects here
-async def agent_ws_handler(websocket):
-    # path будет вида "/agent?token=..."
-    parsed = urlparse(websocket.path)
-    qs = parse_qs(parsed.query)
-    token = qs.get("token", [None])[0]
+async def agent_ws_handler(request):
+    # Получаем query-параметр token из URL
+    qs = request.rel_url.query
+    token = qs.get("token")
     if not token:
-        await websocket.close()
-        return
+        return web.Response(status=400, text="Missing token")
+
+    ws_agent = web.WebSocketResponse()
+    await ws_agent.prepare(request)
 
     print(f"[+] Агент подключился: {token}")
-    agent_connections[token] = websocket
+    agent_connections[token] = ws_agent
 
     try:
-        # ждём, пока агент отключится
-        await websocket.wait_closed()
+        # Ждём, пока агент отключится
+        async for msg in ws_agent:
+            if msg.type == web.WSMsgType.BINARY:  # Обрабатываем бинарные сообщения
+                print(f"[DEBUG] Получены бинарные данные от агента {token}")
+            elif msg.type == web.WSMsgType.ERROR:
+                print(f"[!] Ошибка WebSocket соединения: {ws_agent.exception()}")
     finally:
-        if agent_connections.get(token) is websocket:
+        if agent_connections.get(token) is ws_agent:
             del agent_connections[token]
             print(f"[-] Агент отключился: {token}")
+
+    return ws_agent
 
 # HTTP app (aiohttp) для статики и сессий
 app = web.Application()
 app.router.add_get('/session/{token}', handle_session)
 app.router.add_get('/static/novnc/{path:.*}', serve_static)
 app.router.add_get('/client/{token}', client_ws_handler)
+app.router.add_get('/agent', agent_ws_handler)
 
-# Запуск aiohttp и websockets параллельно
+# Запуск aiohttp HTTP и WebSocket сервера
 async def start_servers():
     # HTTP server
     runner = web.AppRunner(app)
@@ -100,10 +108,6 @@ async def start_servers():
     site = web.TCPSite(runner, '0.0.0.0', 8000)
     await site.start()
     print("[*] HTTP сервер запущен на порту 8000")
-
-    # WebSocket сервер для агентов
-    ws_server = await websockets.serve(agent_ws_handler, "0.0.0.0", 8001)
-    print("[*] WebSocket сервер для агентов запущен на порту 8001")
 
     await asyncio.Future()  # run forever
 
