@@ -8,19 +8,23 @@ NOVNC_HTML = """
 <html>
 <head>
   <title>Remote Desktop</title>
-  <script src="/static/novnc/app/ui.js"></script>
-  <script src="/static/novnc/app/rfb.js"></script>
   <style>html, body, #noVNC_canvas { width:100%; height:100%; margin:0; background:#000; }</style>
 </head>
 <body>
   <canvas id="noVNC_canvas"></canvas>
-  <script>
+  <script type="module">
+    import RFB from "/static/core/rfb.js";
     const rfb = new RFB(document.getElementById('noVNC_canvas'), "ws://" + location.host + "/client/{{token}}");
     rfb.viewOnly = false;
   </script>
 </body>
 </html>
 """
+# Путь к распакованному архиву noVNC
+NOVNC_DIR = "/root/Projects/RecoteConnectFromLink/static/"
+
+app = web.Application()
+app.router.add_static('/static/', NOVNC_DIR)
 
 async def handle_session(request):
     token = request.match_info.get('token')
