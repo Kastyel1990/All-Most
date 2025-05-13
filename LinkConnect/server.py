@@ -1,5 +1,6 @@
 import asyncio
 from aiohttp import web
+import ssl
 
 agent_connections = {}  # token -> websocket
 
@@ -13,18 +14,17 @@ NOVNC_HTML = """
 <body>
   <canvas id="noVNC_canvas"></canvas>
   <script type="module">
-    import RFB from "/static/core/rfb.js";
-    const rfb = new RFB(document.getElementById('noVNC_canvas'), "ws://" + location.host + "/client/{{token}}");
+    import RFB from "/static/novnc/core/rfb.js";
+    const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const rfb = new RFB(
+      document.getElementById('noVNC_canvas'),
+      protocol + '//' + location.host + '/client/{{token}}'
+    );
     rfb.viewOnly = false;
   </script>
 </body>
 </html>
 """
-# Путь к распакованному архиву noVNC
-NOVNC_DIR = "/root/Projects/RecoteConnectFromLink/static/"
-
-app = web.Application()
-app.router.add_static('/static/', NOVNC_DIR)
 
 async def handle_session(request):
     token = request.match_info.get('token')
@@ -40,19 +40,36 @@ async def client_ws_handler(request):
 
     ws_browser = web.WebSocketResponse()
     await ws_browser.prepare(request)
-
     ws_agent = agent_connections[token]
 
-    async def browser_to_agent():
-        async for msg in ws_browser:
-            if msg.type == web.WSMsgType.BINARY:
-                await ws_agent.send_bytes(msg.data)
+    try:
+        while not ws_browser.closed and not ws_agent.closed:
+            task_browser = asyncio.create_task(ws_browser.receive())
+            task_agent = asyncio.create_task(ws_agent.receive())
+            done, pending = await asyncio.wait(
+                [task_browser, task_agent],
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            for task in pending:
+                task.cancel()
+            for task in done:
+                msg = task.result()
+                if task == task_browser:
+                    src, dst = ws_browser, ws_agent
+                else:
+                    src, dst = ws_agent, ws_browser
 
-    async def agent_to_browser():
-        async for data in ws_agent:
-            await ws_browser.send_bytes(data)
+                if msg.type == web.WSMsgType.BINARY:
+                    await dst.send_bytes(msg.data)
+                elif msg.type == web.WSMsgType.TEXT:
+                    await dst.send_str(msg.data)
+                elif msg.type in (web.WSMsgType.CLOSE, web.WSMsgType.ERROR):
+                    await src.close()
+                    await dst.close()
+                    return ws_browser
+    except Exception as e:
+        print(f"[!] Ошибка в proxy loop: {e}")
 
-    await asyncio.gather(browser_to_agent(), agent_to_browser())
     return ws_browser
 
 async def agent_ws_handler(request):
@@ -74,11 +91,16 @@ async def agent_ws_handler(request):
         print(f"[-] Агент отключился: {token}")
 
     return ws_agent
+# Путь к распакованному архиву noVNC
+NOVNC_DIR = "/root/Projects/RecoteConnectFromLink/static/"
 
 app = web.Application()
 app.router.add_get('/session/{token}', handle_session)
 app.router.add_get('/client/{token}', client_ws_handler)
 app.router.add_get('/agent', agent_ws_handler)
+app.router.add_static('/static/', NOVNC_DIR)
 
 if __name__ == '__main__':
-    web.run_app(app, port=8000)
+    ssl_context = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)
+    ssl_context.load_cert_chain('server.crt', 'server.key')
+    web.run_app(app, port=8443, ssl_context=ssl_context)
