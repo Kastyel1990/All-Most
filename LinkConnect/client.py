@@ -72,7 +72,9 @@ def start_x11vnc(port=5900):
         "-nopw",
         "-o", "/tmp/x11vnc.log",
         "-auth", "/var/run/lightdm/root/:0",
-        "-repeat"
+        "-repeat",
+        "-noncache",
+        "-rfbversion", "3.3"
     ])
 
 def find_free_port():
@@ -136,9 +138,10 @@ def main():
 
     try:
         print(f"[*] Подключение к WebSocket серверу...")
-        ws_url = f"wss://{args.server_host}:{args.server_port}/agent?token={token}"
+        protocol = "wss" if args.server_port == 443 or args.server_port == 8443 else "ws"
+        ws_url = f"{protocol}://{args.server_host}:{args.server_port}/agent?token={token}"
         ssl_context = ssl._create_unverified_context()
-        ws = websocket.create_connection(ws_url)
+        ws = websocket.create_connection(ws_url, sslopt={"cert_reqs": ssl.CERT_NONE})
         vnc_sock = connect_vnc(vnc_port)
 
         print(f"[+] Сессия доступна по ссылке: {link}")
