@@ -40,35 +40,24 @@ async def client_ws_handler(request):
 
     ws_browser = web.WebSocketResponse()
     await ws_browser.prepare(request)
+
     ws_agent = agent_connections[token]
 
-    try:
-        while not ws_browser.closed and not ws_agent.closed:
-            task_browser = asyncio.create_task(ws_browser.receive())
-            task_agent = asyncio.create_task(ws_agent.receive())
-            done, pending = await asyncio.wait(
-                [task_browser, task_agent],
-                return_when=asyncio.FIRST_COMPLETED,
-            )
-            for task in pending:
-                task.cancel()
-            for task in done:
-                msg = task.result()
-                if task == task_browser:
-                    src, dst = ws_browser, ws_agent
-                else:
-                    src, dst = ws_agent, ws_browser
-
+    async def relay(src, dst):
+        try:
+            async for msg in src:
                 if msg.type == web.WSMsgType.BINARY:
                     await dst.send_bytes(msg.data)
                 elif msg.type == web.WSMsgType.TEXT:
                     await dst.send_str(msg.data)
                 elif msg.type in (web.WSMsgType.CLOSE, web.WSMsgType.ERROR):
-                    await src.close()
-                    await dst.close()
-                    return ws_browser
-    except Exception as e:
-        print(f"[!] Ошибка в proxy loop: {e}")
+                    break
+        finally:
+            await dst.close()
+
+    task1 = asyncio.create_task(relay(ws_browser, ws_agent))
+    task2 = asyncio.create_task(relay(ws_agent, ws_browser))
+    await asyncio.wait([task1, task2], return_when=asyncio.FIRST_COMPLETED)
 
     return ws_browser
 
@@ -84,13 +73,14 @@ async def agent_ws_handler(request):
     print(f"[+] Агент подключился: {token}")
 
     try:
-        async for _ in ws_agent:
-            pass
+        while not ws_agent.closed:
+            await asyncio.sleep(1)
     finally:
         agent_connections.pop(token, None)
         print(f"[-] Агент отключился: {token}")
 
     return ws_agent
+
 # Путь к распакованному архиву noVNC
 NOVNC_DIR = "/root/Projects/RecoteConnectFromLink/static/"
 
