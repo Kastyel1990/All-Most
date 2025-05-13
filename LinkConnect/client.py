@@ -5,8 +5,11 @@ import uuid
 import shutil
 import socket
 import threading
+import os
+import sys
 import websocket
 from websocket import create_connection
+import ssl
 
 def is_tool_installed(tool):
     """Проверяет, установлен ли инструмент."""
@@ -48,14 +51,28 @@ def ensure_dependencies():
             return False
 
     return True
+def ask_sudo_password():
+    """Явно запросить пароль sudo у пользователя (если надо)."""
+    try:
+        # -v обновит таймер sudo или запросит пароль
+        subprocess.run(['sudo', '-v'], check=True)
+    except subprocess.CalledProcessError:
+        print("Ошибка: sudo не доступен или неверный пароль.")
+        sys.exit(1)
 
-def start_x11vnc(display=":0", port=5900):
+def start_x11vnc(port=5900):
     """Запускает x11vnc на указанном дисплее и порту."""
     return subprocess.Popen([
-        "x11vnc", "-display", display,
+        "sudo",
+        "x11vnc",
         "-rfbport", str(port),
-        "-forever", "-nopw", "-shared",
-        "-o", "/dev/null"
+        "-dontdisconnect",
+        "-forever", 
+        "-shared",
+        "-nopw",
+        "-o", "/tmp/x11vnc.log",
+        "-auth", "/var/run/lightdm/root/:0",
+        "-repeat"
     ])
 
 def find_free_port():
@@ -66,8 +83,7 @@ def find_free_port():
     sock.close()
     return port
 
-def connect_vnc(port):
-    """Подключается к VNC-серверу на указанном порту."""
+def connect_vnc(port=5900):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect(("127.0.0.1", port))
     return sock
@@ -102,8 +118,8 @@ def main():
     parser = argparse.ArgumentParser(description="Reverse VNC Agent")
     parser.add_argument("--duration", type=int, default=3600, help="Сколько секунд действует сессия (по умолчанию: 3600)")
     parser.add_argument("--display", default=":0", help="DISPLAY для x11vnc (по умолчанию: :0)")
-    parser.add_argument("--server-host", default="127.0.0.1", help="Хост сервера (по умолчанию: localhost)")
-    parser.add_argument("--server-port", type=int, default=8000, help="Порт сервера (по умолчанию: 8000)")
+    parser.add_argument("--server-host", default="185.105.118.106", help="Хост сервера (по умолчанию: localhost)")
+    parser.add_argument("--server-port", type=int, default=8443, help="Порт сервера (по умолчанию: 8443)")
     args = parser.parse_args()
 
     if not ensure_dependencies():
@@ -111,19 +127,18 @@ def main():
 
     vnc_port = find_free_port()
     token = str(uuid.uuid4())
-    link = f"http://{args.server_host}:{args.server_port}/session/{token}"
+    link = f"https://{args.server_host}:{args.server_port}/session/{token}"
 
     print(f"[*] Запуск x11vnc на порту {vnc_port}...")
-    vnc_proc = start_x11vnc(display=args.display, port=vnc_port)
-    time.sleep(2)
+    ask_sudo_password()
+    vnc_proc = start_x11vnc(port=vnc_port)
+    time.sleep(5)
 
     try:
         print(f"[*] Подключение к WebSocket серверу...")
-        ws_url = f"ws://{args.server_host}:{args.server_port}/agent?token={token}"
-        ws = websocket.create_connection(
-            ws_url,
-            header=["Sec-WebSocket-Protocol: binary"]
-        )
+        ws_url = f"wss://{args.server_host}:{args.server_port}/agent?token={token}"
+        ssl_context = ssl._create_unverified_context()
+        ws = websocket.create_connection(ws_url)
         vnc_sock = connect_vnc(vnc_port)
 
         print(f"[+] Сессия доступна по ссылке: {link}")
