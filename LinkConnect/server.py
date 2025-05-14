@@ -4,21 +4,48 @@ import ssl
 
 agent_connections = {}  # token -> {'ws_agent': ..., 'browser_future': ...}
 
+# NOVNC_HTML = """
+# <!DOCTYPE html>
+# <html>
+# <head>
+#   <title>Remote Desktop</title>
+#   <style>html, body, #noVNC_canvas { width:100%; height:100%; margin:0; background:#000; }</style>
+# </head>
+# <body>
+#   <canvas id="noVNC_canvas"></canvas>
+#   <script type="module">
+#     import RFB from "/static/novnc/core/rfb.js";
+#     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+#     localStorage.debug = 'noVNC:*';
+#     const rfb = new RFB(
+#       document.getElementById('noVNC_canvas'),
+#       protocol + '//' + location.host + '/client/{{token}}'
+#     );
+#     rfb.viewOnly = false;
+#   </script>
+# </body>
+# </html>
+# """
+
 NOVNC_HTML = """
 <!DOCTYPE html>
 <html>
 <head>
-  <title>Remote Desktop</title>
-  <style>html, body, #noVNC_canvas { width:100%; height:100%; margin:0; background:#000; }</style>
+  <title>noVNC Test</title>
+  <meta charset="utf-8">
+  <style>
+    html, body { height: 100%; margin: 0; background: #000; }
+    #vnc_container { width: 100vw; height: 100vh; }
+  </style>
 </head>
 <body>
-  <canvas id="noVNC_canvas"></canvas>
+  <div id="vnc_container"></div>
   <script type="module">
     import RFB from "/static/novnc/core/rfb.js";
+    localStorage.debug = 'noVNC:*'; // включаем отладку
     const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-    localStorage.debug = 'noVNC:*';
     const rfb = new RFB(
-      document.getElementById('noVNC_canvas'),
+      document.getElementById('vnc_container'),
       protocol + '//' + location.host + '/client/{{token}}'
     );
     rfb.viewOnly = false;
