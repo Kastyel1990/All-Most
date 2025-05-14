@@ -71,7 +71,6 @@ def start_x11vnc(port=5900):
         "-shared",
         "-nopw",
         "-o", "/tmp/x11vnc.log",
-        "-auth", "/var/run/lightdm/root/:0",
         "-repeat",
         "-noncache",
         "-rfbversion", "3.3"
