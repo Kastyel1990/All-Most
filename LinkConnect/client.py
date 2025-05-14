@@ -11,9 +11,25 @@ import websocket
 from websocket import create_connection
 import ssl
 
+def local_tool_path(tool):
+    """Ищет бинарник рядом со скриптом."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    local_path = os.path.join(script_dir, tool)
+    if os.path.isfile(local_path) and os.access(local_path, os.X_OK):
+        return local_path
+    return None
+
+def find_tool(tool):
+    """Возвращает путь к инструменту: локальный или из PATH, иначе None."""
+    local = local_tool_path(tool)
+    if local:
+        return local
+    system = shutil.which(tool)
+    return system
+
 def is_tool_installed(tool):
-    """Проверяет, установлен ли инструмент."""
-    return shutil.which(tool) is not None
+    """Проверяет, установлен ли инструмент или лежит рядом со скриптом."""
+    return shutil.which(tool) is not None or local_tool_path(tool) is not None
 
 def install_tool(tool, pkg_managers):
     """Устанавливает указанный инструмент."""
@@ -28,29 +44,12 @@ def install_tool(tool, pkg_managers):
     return False
 
 def ensure_dependencies():
-    """Проверяет и устанавливает зависимости."""
-    missing = []
-    for tool in ["x11vnc"]:
-        if not is_tool_installed(tool):
-            missing.append(tool)
-
-    if not missing:
-        return True
-
-    print(f"[!] Отсутствуют необходимые пакеты: {', '.join(missing)}")
-
-    pkg_managers = {
-        "apt": ["sudo", "apt", "install", "-y"],
-        "apt-get": ["sudo", "apt-get", "install", "-y"],
-        "dnf": ["sudo", "dnf", "install", "-y"]
-    }
-
-    for tool in missing:
-        if not install_tool(tool, pkg_managers):
-            print(f"[!] Установите {tool} вручную.")
-            return False
-
+    """Проверяет, есть ли x0vncserver (рядом или в системе)."""
+    if not is_tool_installed("x0vncserver"):
+        print("[!] Не найден x0vncserver! Положите исполняемый файл x0vncserver рядом со скриптом.")
+        return False
     return True
+
 def ask_sudo_password():
     """Явно запросить пароль sudo у пользователя (если надо)."""
     try:
@@ -60,21 +59,32 @@ def ask_sudo_password():
         print("Ошибка: sudo не доступен или неверный пароль.")
         sys.exit(1)
 
-def start_x11vnc(port=5900):
-    """Запускает x11vnc на указанном дисплее и порту."""
-    return subprocess.Popen([
-        "sudo",
-        "x11vnc",
-        "-rfbport", str(port),
-        "-dontdisconnect",
-        "-forever", 
-        "-shared",
-        "-nopw",
-        "-o", "/tmp/x11vnc.log",
-        "-repeat",
-        "-noncache",
-        "-rfbversion", "3.3"
-    ])
+def start_vnc_server(port=5900, display=":0"):
+    # Проверяем локальный бинарник
+    x0vnc_path = local_tool_path("x0vncserver") or shutil.which("x0vncserver")
+    if x0vnc_path:
+        return subprocess.Popen([
+            x0vnc_path,
+            "-display", display,
+            "-rfbport", str(port),
+            "-SecurityTypes", "None",
+            "-AlwaysShared"
+            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    # Fallback на x11vnc если есть (по $PATH)
+    x11vnc_path = shutil.which("x11vnc")
+    if x11vnc_path:
+        return subprocess.Popen([
+            x11vnc_path,
+            "-rfbport", str(port),
+            "-forever",
+            "-shared",
+            "-nopw",
+            "-display", display,
+            "-repeat",
+            "-noncache"
+        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    print("[!] Нет подходящего VNC-сервера (x0vncserver или x11vnc).")
+    sys.exit(1)
 
 def find_free_port():
     """Находит свободный порт."""
@@ -130,10 +140,16 @@ def main():
     token = str(uuid.uuid4())
     link = f"https://{args.server_host}:{args.server_port}/session/{token}"
 
-    print(f"[*] Запуск x11vnc на порту {vnc_port}...")
-    ask_sudo_password()
-    vnc_proc = start_x11vnc(port=vnc_port)
+    print(f"[*] Запуск x0vncserver на порту {vnc_port}...")
+    vnc_proc = start_vnc_server(port=vnc_port, display=args.display)
     time.sleep(5)
+
+    if vnc_proc.poll() is not None:
+        print("[!] VNC сервер завершился с ошибкой!")
+        stdout, stderr = vnc_proc.communicate()
+        print("STDOUT:", stdout.decode())
+        print("STDERR:", stderr.decode())
+        sys.exit(1)
 
     try:
         print(f"[*] Подключение к WebSocket серверу...")
