@@ -10,6 +10,8 @@ import sys
 import websocket
 from websocket import create_connection
 import ssl
+import pyperclip
+import json
 
 def local_tool_path(tool):
     """Ищет бинарник рядом со скриптом."""
@@ -112,14 +114,40 @@ def tunnel_vnc_to_ws(vnc_sock, ws):
     finally:
         ws.close()
 
-def tunnel_ws_to_vnc(ws, vnc_sock):
-    """Передает данные из WebSocket в VNC."""
+def monitor_clipboard(ws, stop_event):
+    last_clip = None
+    while not stop_event.is_set():
+        try:
+            curr = pyperclip.paste()
+            if curr != last_clip:
+                last_clip = curr
+                # Отправляем clipboard как TEXT JSON
+                msg = '{"type":"clipboard","text":' + json.dumps(curr) + '}'
+                ws.send(msg)
+        except Exception as e:
+            print(f"[!] Clipboard monitor error: {e}")
+        time.sleep(1)
+
+def tunnel_ws_to_vnc(ws, vnc_sock, stop_event):
+    """Передает данные из WebSocket в VNC (и обрабатывает clipboard)."""
     try:
-        while True:
+        while not stop_event.is_set():
             data = ws.recv()
             if not data:
                 break
-            vnc_sock.send(data)
+            # Проверяем: это бинарные данные или clipboard-сообщение (TEXT)
+            if isinstance(data, bytes):
+                vnc_sock.send(data)
+            else:
+                try:
+                    obj = json.loads(data)
+                    if obj.get("type") == "clipboard":
+                        text = obj.get("text", "")
+                        pyperclip.copy(text)
+                        print(f"[CLIPBOARD] Получено из браузера: {text[:40]}")
+                except Exception:
+                    # Если не JSON, игнорируем
+                    pass
     except Exception as e:
         print(f"[!] Ошибка WS->VNC: {e}")
     finally:
@@ -162,12 +190,18 @@ def main():
         print(f"[+] Сессия доступна по ссылке: {link}")
         print(f"[i] Время жизни: {args.duration} секунд")
 
+        stop_event = threading.Event()
+        
+        # Передаем stop_event в потоки
         t1 = threading.Thread(target=tunnel_vnc_to_ws, args=(vnc_sock, ws))
-        t2 = threading.Thread(target=tunnel_ws_to_vnc, args=(ws, vnc_sock))
+        t2 = threading.Thread(target=tunnel_ws_to_vnc, args=(ws, vnc_sock, stop_event))
+        t3 = threading.Thread(target=monitor_clipboard, args=(ws, stop_event))
         t1.start()
         t2.start()
+        t3.start()
 
         time.sleep(args.duration)
+        stop_event.set()
     except KeyboardInterrupt:
         print("[!] Прервано пользователем.")
     except Exception as e:
